@@ -15,9 +15,9 @@ module.exports = (sequelize, Sequelize) => {
             allowNull: false
         },
         activo: {
-            type: Sequelize.BOOLEAN,
-            defaultValue: true
-        }
+        type: Sequelize.BOOLEAN,
+        defaultValue: true
+}
     });
 
     Tarifa.associate = (models) => {
