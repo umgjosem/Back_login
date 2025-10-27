@@ -1,13 +1,16 @@
+// ===============================
+// Importación de módulos y modelos
+// ===============================
 const express = require('express');
 const router = express.Router();
-const bcrypt = require('bcryptjs');
-const jwt = require('jsonwebtoken');
-const { User } = require('../models');
-const { sendRegistrationEmail } = require('../utils/notifications');
-const axios = require('axios');
+const bcrypt = require('bcryptjs');             // Para encriptar contraseñas y validarlas
+const jwt = require('jsonwebtoken');            // Para generar y verificar JWT
+const { User, Cliente } = require('../models'); // Modelos Sequelize (User y Cliente)
+const { sendRegistrationEmail } = require('../utils/notifications'); // Función para enviar emails
 
-const API_BASE = process.env.API_ORIGEN_BASE;
-
+// ===============================
+// Documentación Swagger: Grupo de rutas Auth
+// ===============================
 /**
  * @swagger
  * tags:
@@ -15,6 +18,9 @@ const API_BASE = process.env.API_ORIGEN_BASE;
  *   description: Endpoints de autenticación (registro y login)
  */
 
+// ===============================
+// Ruta: Registro de usuario
+// ===============================
 /**
  * @swagger
  * /auth/register:
@@ -40,7 +46,7 @@ const API_BASE = process.env.API_ORIGEN_BASE;
  *                 type: string
  *     responses:
  *       200:
- *         description: Usuario registrado correctamente
+ *         description: Usuario y cliente registrados correctamente
  *       400:
  *         description: Datos faltantes o correo ya registrado
  *       500:
@@ -50,38 +56,50 @@ router.post('/register', async (req, res) => {
   try {
     const { nombre, apellido, telefono, email, password } = req.body;
     
-    // Validación de campos obligatorios
+    // 1. Validación de campos obligatorios
     if (!nombre || !apellido || !telefono || !email || !password) {
       return res.status(400).json({ message: 'Faltan campos obligatorios.' });
     }
 
-    // Verificar si el usuario ya existe
+    // 2. Verificar si el usuario ya existe
     const existing = await User.findOne({ where: { email } });
     if (existing) return res.status(400).json({ message: 'El correo ya está registrado.' });
 
-    // Encriptar la contraseña
+    // 3. Encriptar contraseña
     const hash = await bcrypt.hash(password, 10);
-    const newUser = await User.create({ nombre, apellido, telefono, email, passwordHash: hash });
 
-    // Enviar correo de bienvenida
-    await sendRegistrationEmail(email, nombre);
-
-    // Crear cliente en API externa
-    await axios.post(`${API_BASE}/clientes`, {
-      nombre,
-      apellido,
-      telefono
-    }).catch(err => {
-      console.warn('Warning: no se pudo crear cliente en API origen:', err.response?.data || err.message);
+    // 4. Crear usuario en la base de datos
+    const newUser = await User.create({ 
+      nombre, 
+      apellido, 
+      telefono, 
+      email, 
+      passwordHash: hash 
     });
 
-    return res.json({ ok: true, message: 'Usuario registrado correctamente.', user: { id: newUser.id, email: newUser.email } });
+    // 5. Enviar correo de bienvenida
+    await sendRegistrationEmail(email, nombre);
+
+    // 6. Crear cliente en la misma base de datos (ya no se usa API externa)
+    const nuevoCliente = await Cliente.create({ nombre });
+
+    // 7. Respuesta exitosa
+    return res.json({
+      ok: true,
+      message: 'Usuario y cliente registrados correctamente.',
+      user: { id: newUser.id, email: newUser.email, nombre: newUser.nombre },
+      cliente: nuevoCliente
+    });
+
   } catch (err) {
     console.error('Error en registro:', err);
-    res.status(500).json({ error: 'Error al registrar usuario.' });
+    res.status(500).json({ error: 'Error al registrar usuario y cliente.' });
   }
 });
 
+// ===============================
+// Ruta: Login de usuario
+// ===============================
 /**
  * @swagger
  * /auth/login:
@@ -101,7 +119,7 @@ router.post('/register', async (req, res) => {
  *                 type: string
  *     responses:
  *       200:
- *         description: Login exitoso, devuelve JWT
+ *         description: Login exitoso, devuelve JWT y nombre del usuario
  *       400:
  *         description: Datos faltantes
  *       401:
@@ -112,21 +130,39 @@ router.post('/register', async (req, res) => {
 router.post('/login', async (req, res) => {
   try {
     const { email, password } = req.body;
+
+    // 1. Validar datos de entrada
     if (!email || !password) return res.status(400).json({ message: 'Faltan datos' });
 
+    // 2. Buscar usuario por email
     const user = await User.findOne({ where: { email } });
     if (!user) return res.status(401).json({ message: 'Credenciales inválidas' });
 
+    // 3. Comparar contraseñas
     const ok = await bcrypt.compare(password, user.passwordHash);
     if (!ok) return res.status(401).json({ message: 'Credenciales inválidas' });
 
-    // Generar JWT
-    const token = jwt.sign({ id: user.id, email: user.email }, process.env.JWT_SECRET, { expiresIn: process.env.JWT_EXPIRES_IN || '7d' });
-    res.json({ ok: true, token });
+    // 4. Generar JWT
+    const token = jwt.sign(
+      { id: user.id, email: user.email },
+      process.env.JWT_SECRET,
+      { expiresIn: process.env.JWT_EXPIRES_IN || '7d' }
+    );
+
+    // 5. Responder con token y nombre del usuario
+    res.json({ 
+      ok: true, 
+      token,
+      nombre: user.nombre  // 👈 aquí devolvemos el nombre del usuario
+    });
+
   } catch (err) {
     console.error('Login error', err);
     res.status(500).json({ error: 'Error en login' });
   }
 });
 
+// ===============================
+// Exportar router
+// ===============================
 module.exports = router;
